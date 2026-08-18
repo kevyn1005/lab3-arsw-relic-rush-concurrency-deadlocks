@@ -48,9 +48,13 @@ Explain the responsibility of both barriers:
 
 ### 4.1 Evidence
 
-```text
-PASTE DeadlockProbe OR jcmd/jstack EVIDENCE
 ```
+PS C:\Users\Lenovo\Desktop\Uni\ARSW\Lab03> java -cp target/classes edu.eci.arsw.relicrush.app.DeadlockProbe
+DEADLOCK DETECTED
+- probe-A-anvil-then-furnace waiting on edu.eci.arsw.relicrush.model.ForgeStation@2626b418 owned by probe-B-furnace-then-anvil
+- probe-B-furnace-then-anvil waiting on edu.eci.arsw.relicrush.model.ForgeStation@78308db1 owned by probe-A-anvil-then-furnace
+```
+
 
 ### 4.2 Coffman conditions in Relic Rush
 

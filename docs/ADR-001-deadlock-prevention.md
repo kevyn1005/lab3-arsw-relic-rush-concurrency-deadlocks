@@ -26,100 +26,89 @@ instead of just producing a wrong number.
 
 ## Decision
 
-Acquire the two station monitors in a deterministic global order
-instead of the order the caller supplied: always lock the
-`ForgeStation` with the lower `id()` first, then the one with the
-higher `id()`.
+Lock the two station monitors in a fixed order instead of the order
+the caller happens to supply: always lock the `ForgeStation` with the
+lower `id()` first, then the other one.
 
 ```java
 public static void withBoth(ForgeStation first, ForgeStation second, Runnable action) {
-    ForgeStation lowerId = first;
-    ForgeStation higherId = second;
+    ForgeStation lower = first;
+    ForgeStation higher = second;
     if (first.id() > second.id()) {
-        lowerId = second;
-        higherId = first;
+        lower = second;
+        higher = first;
     }
-    synchronized (lowerId) {
-        synchronized (higherId) {
+    synchronized (lower) {
+        synchronized (higher) {
             action.run();
         }
     }
 }
 ```
 
-`ForgeStation.id()` is assigned once at station creation and never
-changes, so every thread in the process agrees on the same total
-order over stations. Two adventurers that want the same pair of
-stations — regardless of which one they call `first` and which one
-they call `second` — always attempt to lock them in the same
-sequence, so the wait-for graph between them can no longer contain a
-cycle. This is the standard **resource ordering / lock ordering**
-technique for breaking circular wait, applied at the smallest possible
-scope (this one static method), with no change to `ForgeStation`,
-`Adventurer`, or `GameEngine`.
+`ForgeStation.id()` is set once when the station is created and never
+changes, so every thread agrees on the same ordering. Two adventurers
+that want the same pair of stations, no matter which one they pass as
+`first` and which as `second`, will always try to lock them in the
+same order, so there's no way for a cycle to form in the wait-for
+graph anymore. This is the usual resource-ordering approach to
+breaking circular wait, and it only touches this one method, nothing
+in `ForgeStation`, `Adventurer` or `GameEngine` had to change.
 
 ## Alternatives considered
 
-1. **Single global lock around the whole craft operation** (e.g.
-   `synchronized (GLOBAL_LOCK) { ... }` in `LockPair.withBoth`, or a
-   game-wide lock in `GameEngine`). Trivially deadlock-free and easy to
-   reason about, but it is explicitly disallowed by the lab and would
-   defeat the purpose of the exercise: it would force every adventurer
-   to wait for every other adventurer on every craft, even when their
-   two station pairs share no station at all. With 8 stations there
-   are 28 possible unordered pairs, so in practice most concurrent
-   turns target disjoint pairs and should be able to run fully in
-   parallel — a global lock throws that away.
+1. **One global lock around the whole craft operation**, for example
+   `synchronized (GLOBAL_LOCK) { ... }` inside `LockPair.withBoth`.
+   Deadlock-free and about as simple as it gets, but the lab rules it
+   out, and for good reason: it would make every adventurer wait for
+   every other one on every craft, even when their two stations don't
+   overlap at all. With 8 stations there are 28 possible pairs, so
+   most turns don't actually collide, and a global lock throws that
+   concurrency away for no reason.
 
-2. **`tryLock` with timeout and retry**, using
-   `java.util.concurrent.locks.ReentrantLock` instead of intrinsic
-   monitors: a thread that cannot acquire the second lock within a
-   timeout releases the first one and retries. This also removes
-   circular wait (technically it removes "no preemption" instead, by
-   letting a thread voluntarily give up a held resource), and can be a
-   good fit when lock ordering isn't available or is hard to define.
-   Here it was rejected because it needs `ForgeStation` to hold an
-   explicit `Lock` field (losing the "the station is its own monitor"
-   simplicity), adds retry/back-off tuning (how long to wait, how many
-   retries, backoff strategy) that has no natural answer for this
-   game, and can degrade into busy-retrying / near-livelock under the
-   128-player stress configuration without careful tuning. Lock
-   ordering achieves the same correctness with none of that
-   complexity, because this game already has a natural, stable total
-   order to use: station id.
+2. **`tryLock` with a timeout**, using
+   `java.util.concurrent.locks.ReentrantLock` instead of plain
+   monitors: if a thread can't grab the second lock in time, it lets
+   go of the first one and tries again later. This also gets rid of
+   the deadlock, just from a different angle (it removes "no
+   preemption" instead of circular wait, since the thread voluntarily
+   gives up what it's holding). We didn't go with it because it means
+   `ForgeStation` needs an explicit `Lock` field instead of being its
+   own monitor, and picking a reasonable timeout and retry/backoff
+   policy isn't obvious, especially under the 128-player stress test,
+   where a bad choice could turn into a lot of wasted retries.
 
-3. **Deterministic lock ordering by station id (chosen).** Minimal,
-   local change (one static method), keeps `ForgeStation` as a plain
-   monitor object, preserves fine-grained per-pair locking, and needs
-   no tuning or retry logic. Selected over the two alternatives above.
+3. **Lock ordering by station id (what we picked).** Small, local
+   change, `ForgeStation` stays a plain monitor object, locking is
+   still fine-grained per pair, and there's no tuning involved.
 
 ## Quality attributes affected
 
-- **Correctness.** Eliminates the circular-wait condition, so
-  `DeadlockProbe` no longer reports a deadlock (see Evidence). The
-  station mutual-exclusion invariant is unaffected — it is enforced
-  the same way as before (`synchronized` on the station object), just
-  in a different, consistent order.
-- **Performance / throughput.** No new contention is introduced. The
-  ordering rule only decides *which* of the two locks is attempted
-  first; it does not increase the total number of locks held or the
-  time they are held, and independent (disjoint) station pairs remain
-  fully concurrent. Stress runs at 8, 32 and 128 players (section 5 of
-  `docs/REPORT.md`) all completed with `invariant=OK` on every round.
-- **Maintainability.** The rule is a single, well-documented comparison
-  in one method (`first.id() > second.id()`), so any future caller of
-  `LockPair.withBoth` gets deadlock-free behavior automatically,
-  without needing to know or repeat the ordering logic.
-- **Scalability.** The fix does not change how contention scales with
-  player/station ratio — that scaling is inherent to the game rules
-  (more players sharing fewer stations means more legitimate waiting
-  on the same station), not an artifact of the locking strategy.
+- **Correctness.** Gets rid of the circular-wait condition, so
+  `DeadlockProbe` stops reporting a deadlock (see Evidence below). The
+  mutual-exclusion invariant on stations doesn't change at all, it's
+  still enforced with `synchronized` on the station object, just in a
+  consistent order now.
+- **Performance / throughput.** Doesn't add any new contention. The
+  ordering rule only decides which of the two locks gets tried first;
+  it's the same number of locks held for the same amount of time, and
+  station pairs that don't overlap still run fully in parallel. The
+  stress runs at 8, 32 and 128 players in `docs/REPORT.md` section 5
+  all finished with `invariant=OK` every round.
+- **Maintainability.** It's one comparison in one method
+  (`first.id() > second.id()`), so anyone who calls
+  `LockPair.withBoth` later gets the deadlock-free behavior for free,
+  without having to know the rule exists.
+- **Scalability.** Doesn't change how contention scales with the
+  player-to-station ratio. That scaling comes from the game rules
+  themselves (more players sharing fewer stations means more waiting),
+  not from how the locking is implemented.
 
 ## Evidence
 
-**Before fix** (starter `LockPair`, unordered lock acquisition —
-reproduced 2 out of 3 runs, matching the lab's note that the race is
-intermittent):
+**Before fix** (starter `LockPair`, unordered lock acquisition, showed
+up in 2 out of 3 runs, which matches what the lab says about the race
+being intermittent):
 
 ```
 $ java -cp target/classes edu.eci.arsw.relicrush.app.DeadlockProbe
@@ -128,10 +117,10 @@ DEADLOCK DETECTED
 - probe-B-furnace-then-anvil waiting on edu.eci.arsw.relicrush.model.ForgeStation@53d8d10a owned by probe-A-anvil-then-furnace
 ```
 
-**After fix** (deterministic lock ordering by station id — 8/8 clean
-runs, reproduced twice: once in an isolated build environment and a
-second time independently by chimi on the team's own Windows machine,
-`hever` branch, `mvn clean test` green with JDK 21):
+**After fix** (lock ordering by station id, 8/8 clean runs, checked
+twice: once while building the fix and again independently by chimi on
+the team's own Windows machine, `hever` branch, `mvn clean test` green
+on JDK 21):
 
 ```
 PS ...\lab3-arsw-relic-rush-concurrency-deadlocks> for ($i=1; $i -le 8; $i++) { java -cp target/classes edu.eci.arsw.relicrush.app.DeadlockProbe }
@@ -148,45 +137,44 @@ occurrences of `invariant=BROKEN` in the logs, on both machines.
 
 ## Consequences
 
-Positive:
+Good:
 
-- The game can no longer deadlock through `LockPair`, so
+- The game can't deadlock through `LockPair` anymore, so
   `GameEngine.run()` always reaches `roundEnd` for every adventurer and
-  the game terminates normally instead of being killed by the
-  deadlock watchdog.
-- No loss of concurrency: the fix changes lock *order*, not lock
-  *granularity*, so throughput under stress (128 players / 8 stations)
-  is unaffected by this change.
-- The rule is trivial to audit: any code review can check "does this
-  code lock two stations by ascending id?" without needing to trace
-  call graphs.
+  the game finishes normally instead of getting killed by the
+  watchdog.
+- No concurrency lost. The fix only changes the *order* locks are
+  taken in, not how many locks or how coarse they are, so throughput
+  under stress (128 players, 8 stations) isn't affected.
+- Easy to check: anyone reviewing the code just has to confirm it
+  locks stations by ascending id, no need to trace through call
+  graphs.
 
-Negative / trade-offs:
+Not so good:
 
-- The rule depends on every station having a stable, unique `id()`
-  that is assigned once and never mutated. If a future change made
-  station ids mutable, or introduced a second kind of exclusive
-  resource without an id, the ordering rule would need to be
-  redefined for it.
-- All callers of `withBoth` **must** go through `LockPair` for any
-  two-station acquisition; a future developer who writes
-  `synchronized (a) { synchronized (b) { ... } }` directly, bypassing
-  `LockPair`, would reintroduce circular wait. This is a convention,
-  not something the compiler enforces.
+- It only works because every station has a stable, unique `id()` set
+  once and never changed. If ids ever became mutable, or a second kind
+  of exclusive resource without an id got added, the ordering rule
+  would need to be reworked.
+- Every caller that needs two stations has to go through `LockPair`.
+  If someone writes `synchronized (a) { synchronized (b) { ... } }`
+  directly somewhere else, bypassing `LockPair`, the deadlock comes
+  right back. Nothing in the compiler stops that, it's just a
+  convention we have to follow.
 
 ## Risks
 
-- **New exclusive resources.** If a future feature adds a third kind
-  of exclusive resource (not a `ForgeStation`), or operations that
-  need three or more stations at once, the two-argument ordering in
-  `withBoth` would need to be generalized (e.g. sort a `List<ForgeStation>`
-  by id and acquire in that order) rather than reused as-is.
-- **Id collisions.** The ordering assumes `id()` values are unique
-  across all stations in a game. `GameEngine.createStations` already
-  guarantees this (`i + 1` for `i` in `0..count`), but nothing at the
-  type level prevents a future caller from constructing two
-  `ForgeStation` instances with the same id; that would make the
-  `first.id() > second.id()` comparison ambiguous for that pair.
-- **Bypassing `LockPair`.** As noted above, the safety property lives
-  in one method by convention. Code review / a lint rule is the only
-  guard against new code taking two station monitors directly.
+- **New exclusive resources.** If a future feature adds something
+  else that needs exclusive access besides `ForgeStation`, or an
+  operation that needs three or more stations at once, the
+  two-argument ordering in `withBoth` won't be enough as-is. It would
+  need to become something like sorting a `List<ForgeStation>` by id
+  and locking them in that order.
+- **Id collisions.** The whole thing assumes every station's `id()` is
+  unique. `GameEngine.createStations` already guarantees that, but
+  nothing stops some future code from creating two `ForgeStation`
+  objects with the same id, which would make the ordering comparison
+  meaningless for that pair.
+- **Someone skips `LockPair`.** Since the safety property only lives
+  in this one method by convention, the only real guard against new
+  code locking two stations directly is code review.

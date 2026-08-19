@@ -17,10 +17,10 @@ Final commit: `SHA`
 
 ## 1. Baseline observations
 
-- Command(s) executed: `java -cp target/classes edu.eci.arsw.relicrush.app.LedgerRaceProbe 64 5000` and `java -cp target/classes edu.eci.arsw.relicrush.app.RelicRushMain` (defaults: 8 adventurers, 6 stations, 25 rounds), both against the untouched starter commit (`a4bdd20`, before any Lab 3 fix).
-- What happened? `LedgerRaceProbe` lost most of the expected updates: with 64 threads doing 5000 writes each (320000 expected), only 7468 survived in `totalCrafted` and 305989 in the event list. `RelicRushMain` printed `invariant=BROKEN` on the very first rounds, and — because `LockPair` was still using unordered nested locking at the same time — the run frequently froze entirely and was killed by the game's own deadlock watchdog (`GameEngine.startDeadlockWatchdog`) instead of finishing.
-- Was the round invariant always preserved? No. Whenever the race window in `ForgeLedger.record` was hit, `scoreSum`, `ledger.totalCrafted()` and `events.size()` diverged.
-- Did the game stop unexpectedly? Yes, in most runs. The watchdog detected a real JVM deadlock (via `ThreadMXBean.findDeadlockedThreads()`) and called `System.exit(2)` before all 25 rounds completed.
+- Command(s) executed: `java -cp target/classes edu.eci.arsw.relicrush.app.LedgerRaceProbe 64 5000` and `java -cp target/classes edu.eci.arsw.relicrush.app.RelicRushMain` with the default config (8 adventurers, 6 stations, 25 rounds). Both were run against the original starter commit (`a4bdd20`), before touching anything for this lab.
+- What happened? `LedgerRaceProbe` lost most of the writes it was supposed to record: out of 320000 expected updates (64 threads x 5000 writes), only 7468 made it into `totalCrafted` and 305989 into the event list. Running `RelicRushMain` printed `invariant=BROKEN` from round 1, and since `LockPair` still had the unordered locking bug at the same time, most runs just froze and got killed by the game's own watchdog before finishing.
+- Was the round invariant always preserved? No, not even once we let it run for more than a couple of rounds. Any time the race window in `ForgeLedger.record` got hit, `scoreSum`, `ledger.totalCrafted()` and `events.size()` stopped matching.
+- Did the game stop unexpectedly? Yes, in most attempts. `GameEngine.startDeadlockWatchdog` picked up a real JVM deadlock through `ThreadMXBean.findDeadlockedThreads()` and called `System.exit(2)` well before the 25 rounds were done.
 
 Evidence:
 
@@ -54,8 +54,8 @@ Explain the responsibility of both barriers:
 
 | Shared state | Problem | Invariant at risk | Solution | Why this solution? |
 |---|---|---|---|---|
-| `ForgeLedger.totalCrafted` (int) | `record()` did `int next = totalCrafted + 1; Thread.yield(); totalCrafted = next;` — a non-atomic read-modify-write. Two threads can both read the same value before either writes back, so one increment is lost. | `scoreSum == ledger.totalCrafted` | Guard the whole `record()` body (increment + list add) with a single private `Object lock` and `synchronized` blocks; `totalCrafted()`, `eventCount()` and `snapshot()` also synchronize on the same lock so readers see a consistent, published value. | The two writes (counter and list) must stay atomic *together* — a relic is only "real" once both are updated, so one lock protecting both operations is simpler and safer than trying to make each field independently atomic (e.g. `AtomicInteger` for the counter would still race against the separate list add). The lock is private to `ForgeLedger` and unrelated to the `ForgeStation` monitors used by `LockPair`, so it never contends with — or participates in — the station-locking scheme analyzed in section 4. |
-| `ForgeLedger.events` (`ArrayList<ForgeEvent>`) | `ArrayList` is not designed for concurrent structural modification (`add`); concurrent writers can corrupt its internal array/size bookkeeping or silently lose elements, which is exactly what the baseline evidence in section 1 shows (`eventCount=305989` instead of `320000`). | `ledger.totalCrafted == events.size()` and `events.size() == number of ForgeEvent entries` | Same fix as above: `events.add(event)` happens inside the same `synchronized (lock)` block as the counter increment, so the list is never mutated by two threads at once. `List.copyOf(events)` in `snapshot()` is also taken under the lock so it can't observe a half-written list. | A concurrent collection (e.g. `CopyOnWriteArrayList`) was considered but rejected: it would make `events.add` thread-safe in isolation, but would *not* make the pair (counter, list) atomic with respect to each other, which is the actual invariant the game needs. A single narrow lock around the two related writes is the minimal mechanism that satisfies the invariant, and it does not serialize anything outside `ForgeLedger` — station locking in `LockPair` stays fully independent and concurrent. |
+| `ForgeLedger.totalCrafted` (int) | `record()` did `int next = totalCrafted + 1; Thread.yield(); totalCrafted = next;`, which is a read-modify-write split into three separate steps. Two threads can read the same value before either one writes back, so one of the increments just gets lost. | `scoreSum == ledger.totalCrafted` | Wrap the whole `record()` body (increment plus list add) in a `synchronized` block on a private `Object lock`. `totalCrafted()`, `eventCount()` and `snapshot()` synchronize on the same lock, so anyone reading gets a value that was actually published, not a half-updated one. | The counter and the list have to change together: a relic only "counts" once both are updated. That's why one lock around both operations made more sense than trying to make each field atomic on its own (an `AtomicInteger` for the counter, say, would still race against the separate `ArrayList.add`). The lock lives inside `ForgeLedger` and has nothing to do with the `ForgeStation` monitors `LockPair` uses, so it doesn't add any contention with the station-locking part covered in section 4. |
+| `ForgeLedger.events` (`ArrayList<ForgeEvent>`) | `ArrayList` was never meant to be written to from multiple threads at once. Concurrent `add()` calls can corrupt its internal bookkeeping or just drop elements, which is basically what we saw in the baseline run in section 1 (`eventCount=305989` instead of `320000`). | `ledger.totalCrafted == events.size()`, and both should equal the real number of `ForgeEvent`s recorded | Same fix: `events.add(event)` runs inside the same `synchronized (lock)` block as the counter increment, so two threads can never touch the list at the same time. `snapshot()` also takes the lock before calling `List.copyOf(events)`, so it never reads a list mid-write. | We considered swapping `ArrayList` for something like `CopyOnWriteArrayList`, but that only solves half the problem: it makes `add()` safe on its own, but doesn't make the counter and the list update as one atomic unit, which is what the invariant actually needs. A single small lock around both writes is enough, and it doesn't touch anything outside `ForgeLedger`, so the station locking in `LockPair` stays completely independent. |
 
 ## 4. Deadlock diagnosis
 
@@ -99,45 +99,43 @@ DEADLOCK DETECTED
 
 ### 4.4 Fix
 
-**What condition did you break?** Circular wait. The other three Coffman
-conditions (mutual exclusion on each station, hold-and-wait while blocked
-on `synchronized`, and no preemption of a held monitor) are inherent to
-using intrinsic locks for exclusive stations and are not things we want to
-remove — mutual exclusion is required by the game's rules, and Java gives
-us no way to preempt a `synchronized` block anyway. The one condition we
-*can* remove without weakening exclusivity is circular wait, by making
-sure two threads can never end up wanting the same two stations in
-opposite orders.
+**What condition did you break?** Circular wait. We didn't touch the
+other three: mutual exclusion on each station has to stay (that's the
+whole point of the game), hold-and-wait is just what a `synchronized`
+block does while it's blocked, and Java doesn't give you a way to
+preempt a thread that's holding a monitor anyway. Circular wait was the
+only one we could actually get rid of without weakening exclusivity,
+by making sure two threads can never end up wanting the same two
+stations in opposite order.
 
 **How did you preserve concurrency between independent forge operations?**
-`LockPair.withBoth` now derives the acquisition order from
-`ForgeStation.id()` instead of from the order the caller passed the two
-stations in: it always locks the station with the lower id first, then
-the one with the higher id (see `docs/ADR-001-deadlock-prevention.md`).
-This is a resource-ordering strategy, not a global lock — each pair of
-stations still has its own two monitors, and any two adventurers whose
-station pairs don't overlap (e.g. `{Anvil, Furnace}` vs. `{Lens, Altar}`)
-still run their `withBoth` blocks fully in parallel. Only adventurers that
-are actually contending for the *same* station(s) ever wait on each other,
-which is the minimum synchronization the invariant "a station cannot be
-used by two incompatible craft operations at once" requires.
+`LockPair.withBoth` now picks the lock order based on `ForgeStation.id()`
+instead of the order the caller passed the arguments in: it always
+grabs the lower-id station first, then the higher one (details in
+`docs/ADR-001-deadlock-prevention.md`). That's lock ordering, not a
+global lock. Each pair of stations is still guarded by its own two
+monitors, and two adventurers whose stations don't overlap (say one
+craft uses Anvil and Furnace while another uses Lens and Altar) keep
+running at the same time as before. Only adventurers that actually
+want the same station end up waiting on each other, which is really
+the minimum amount of waiting the "no two incompatible crafts on the
+same station" rule requires anyway.
 
 ## 5. Verification
 
-These three configurations were run twice: once in an isolated
-verification environment while building the fix, and a second time by
-chimi on the team's own Windows machine (`mvn clean test` green,
-JDK 21, real network access to Maven Central) to reproduce the same
-result independently. Both runs agree exactly.
+We ran these three configurations twice, once while building the fix
+and again by chimi on the team's own machine (JDK 21, `mvn clean test`
+passing) to make sure it wasn't just working in one environment. Both
+runs matched.
 
 | Players | Stations | Rounds | Deadlock? | Invariant result |
 |---:|---:|---:|---|---|
-| 8 | 6 | 50 | No — 8/8 clean `DeadlockProbe` runs, reproduced independently on both machines | OK — 50/50 rounds `invariant=OK`, game finished normally, 400/400/400 |
-| 32 | 8 | 100 | No | OK — 100/100 rounds `invariant=OK`, game finished normally, 3200/3200/3200 |
-| 128 | 8 | 100 | No | OK — 100/100 rounds `invariant=OK`, game finished normally, 12800/12800/12800 |
+| 8 | 6 | 50 | No, 8/8 clean `DeadlockProbe` runs on both machines | OK, 50/50 rounds `invariant=OK`, finished normally, 400/400/400 |
+| 32 | 8 | 100 | No | OK, 100/100 rounds `invariant=OK`, finished normally, 3200/3200/3200 |
+| 128 | 8 | 100 | No | OK, 100/100 rounds `invariant=OK`, finished normally, 12800/12800/12800 |
 
-Evidence (excerpt from chimi's local run on the `hever` branch, full
-logs available on request):
+Evidence (excerpt from chimi's run on the `hever` branch, full logs
+available on request):
 
 ```text
 PS ...\lab3-arsw-relic-rush-concurrency-deadlocks> for ($i=1; $i -le 8; $i++) { java -cp target/classes edu.eci.arsw.relicrush.app.DeadlockProbe }
@@ -170,99 +168,95 @@ Ledger total     : 12800
 Ledger events    : 12800
 ```
 
-`grep -c "invariant=BROKEN"` on all three logs returns `0` on both
-machines. In every config, `scoreSum == ledger.totalCrafted ==
-events.size()` held for every single round, and the process exited
-normally (no watchdog abort).
+`grep -c "invariant=BROKEN"` returns `0` on all three logs, on both
+machines. `scoreSum == ledger.totalCrafted == events.size()` held for
+every single round in every config, and the process always finished
+normally instead of getting killed by the watchdog.
 
 ## 6. Architectural trade-offs
 
-**Correctness / reliability.** Two invariants are protected: the ledger
-invariant (`scoreSum == totalCrafted == events.size()`), guaranteed by
-making the counter increment and the list append atomic under one lock in
-`ForgeLedger`; and the mutual-exclusion invariant on stations
-("a forge station cannot be used simultaneously by two incompatible craft
-operations"), guaranteed by the `synchronized` blocks in `LockPair` around
-each station object. The evidence in sections 1 and 5 shows both
-invariants failing on the unfixed starter and holding across three stress
-configurations (8/6/50, 32/8/100, 128/8/100 — up to 12800 relics crafted)
-after the fix, with `DeadlockProbe` clean across 8 consecutive runs.
+**Correctness / reliability.** Two invariants matter here. The ledger
+one (`scoreSum == totalCrafted == events.size()`) is protected because
+the counter increment and the list append now happen as one atomic
+step under `ForgeLedger`'s lock. The station one (no two incompatible
+crafts using the same station at once) is protected by the
+`synchronized` blocks in `LockPair`. Section 1 shows both breaking on
+the unfixed starter, and section 5 shows both holding across three
+stress configurations, up to 12800 relics crafted, with `DeadlockProbe`
+clean over 8 runs.
 
-**Performance / throughput.** Lock contention can appear in two places:
-inside `ForgeLedger.record()`, since every successful craft in the whole
-game serializes on the same private lock; and on individual
-`ForgeStation` monitors, when two or more adventurers want the *same*
-station at the *same* time. A single global lock over the entire craft
-operation was deliberately avoided (the lab forbids it) because it would
-force every adventurer to wait for every other adventurer even when their
-station pairs don't overlap at all — with 8 stations there are 28 possible
-pairs, so most concurrent turns target disjoint pairs and can run truly in
-parallel. `LockPair`'s ordering rule only changes *which* station is
-locked first; it does not add any new waiting beyond what mutual exclusion
-on shared stations already requires, so the achievable concurrency is the
-same as an unordered — but correct — fine-grained scheme.
+**Performance / throughput.** There are two places contention can show
+up: inside `ForgeLedger.record()`, since every craft in the game goes
+through the same private lock, and on individual `ForgeStation`
+monitors, when two adventurers want the same station at the same time.
+We stayed away from a single global lock over the whole craft
+operation (the lab rules it out anyway) because it would make every
+adventurer wait for every other adventurer, even ones going for
+completely different stations. With 8 stations there are 28 possible
+pairs, so most turns don't even collide and can run fully in parallel.
+The ordering rule in `LockPair` only changes which station gets locked
+first, it doesn't add any waiting beyond what mutual exclusion on a
+shared station already forces.
 
-**Contention.** `ForgeLedger`'s lock is the one point every thread
-touches every round, so it is the closest thing to a bottleneck in this
-design, but the critical section inside it is tiny (an increment and an
-`ArrayList.add`), so contention there is short-lived compared to the
-random work adventurers do picking stations. Station contention scales
-with `players / stations`: more players sharing fewer stations increases
-the chance two adventurers want the same station, which is expected and
-desired (it's what "exclusive resource" means), not a bug.
+**Contention.** `ForgeLedger`'s lock is the closest thing to a
+bottleneck since every thread hits it every round, but the critical
+section is tiny (one increment, one `ArrayList.add`), so it's held for
+a very short time compared to the rest of what an adventurer does.
+Station contention scales with players divided by stations: more
+players sharing fewer stations means more collisions on the same
+station, which is expected given that stations are supposed to be
+exclusive resources, not a symptom of a bad design.
 
-**Maintainability.** Lock ownership is explicit and local: `ForgeStation`
-instances are the only objects ever used as monitors, and they are only
-ever locked from `LockPair.withBoth`, so there is exactly one place in the
-codebase where station locking rules live. The ordering rule itself is a
-one-line comparison (`first.id() > second.id()`) documented directly in
-`LockPair`'s Javadoc and in `docs/ADR-001-deadlock-prevention.md`, so
-anyone adding a new caller of `withBoth` automatically gets deadlock-free
-behavior without having to know the rule — they just pass two stations,
-in any order.
+**Maintainability.** Lock ownership is easy to follow: `ForgeStation`
+objects are the only things ever used as monitors, and the only place
+that locks them is `LockPair.withBoth`. The ordering rule is a
+one-line comparison (`first.id() > second.id()`) documented right
+there in the code and in the ADR, so anyone who calls `withBoth` later
+gets the deadlock-free behavior automatically without having to know
+the rule exists.
 
-**Scalability.** As the number of players grows while the number of
-stations stays fixed, the probability that two adventurers want the same
-station in the same round increases, so *station* contention grows —
-that's inherent to the game rules, not to the implementation. The
-`ForgeLedger` lock's critical section does not grow with player count (it
-is O(1) per craft), so ledger contention grows linearly with the craft
-rate, not superlinearly. The 128-player / 8-station stress run in section
-5 (3200 → 12800 relics vs. the 32-player run) still finished with 0
-broken rounds, which is consistent with that analysis.
+**Scalability.** As the player count grows with the station count
+fixed, station contention goes up, because more people are competing
+for the same small set of exclusive resources. That's just how the
+game works, not something the locking strategy causes. The ledger
+lock's critical section stays constant size no matter how many players
+there are, so ledger contention grows with the craft rate, not faster
+than that. The 128-player run (12800 relics, four times the 32-player
+run's total) still came out with zero broken rounds, which matches
+that reasoning.
 
 ## 7. Mini ADR
 
 ### Context
 
-See `docs/ADR-001-deadlock-prevention.md` for the full ADR. In short: the
-starter locked `first` then `second` in caller-supplied order, and because
-`Adventurer.playTurn` picks stations with random indices, two adventurers
-could request the same pair of stations in opposite order, creating a
-circular wait confirmed by `DeadlockProbe`.
+Full version in `docs/ADR-001-deadlock-prevention.md`. Short version:
+the starter locked `first` then `second` in whatever order the caller
+passed them, and since `Adventurer.playTurn` picks the two stations
+with random indices, two adventurers could ask for the same pair in
+opposite order. That's a circular wait, and `DeadlockProbe` confirmed
+it.
 
 ### Decision
 
-Order lock acquisition deterministically by `ForgeStation.id()` (always
-lock the lower id first) instead of by call-site argument order. This
-removes the circular-wait condition while keeping two independent
-`synchronized` blocks per craft (fine-grained, not global).
+Lock the two stations by `ForgeStation.id()` order instead of
+call-site order: always take the lower id first. This gets rid of the
+circular wait but keeps two separate `synchronized` blocks per craft,
+so it's still fine-grained, not one big lock.
 
 ### Alternatives considered
 
-1. **Single global lock around the whole craft operation.** Simplest to
-   reason about, but explicitly forbidden by the lab and would serialize
-   every adventurer regardless of which stations they need, destroying
-   the concurrency the game is meant to exercise.
-2. **`tryLock` with timeout/back-off using `java.util.concurrent.locks.ReentrantLock`.**
-   Avoids deadlock by giving up and retrying instead of blocking forever,
-   but adds retry/back-off complexity and can livelock or waste CPU under
-   high contention; it also changes `ForgeStation` from a plain monitor
-   object to something that needs an explicit `Lock` field.
-3. **Deterministic lock ordering by station id (chosen).** Minimal code
-   change, keeps `ForgeStation` as its own monitor, preserves
-   fine-grained locking, and is a textbook resource-ordering solution to
-   circular wait.
+1. **One global lock around the whole craft operation.** Easiest to
+   reason about, but the lab explicitly forbids it, and it would make
+   every adventurer wait for every other one regardless of which
+   stations they actually need.
+2. **`tryLock` with a timeout using `ReentrantLock`.** A thread that
+   can't get the second lock in time backs off and retries instead of
+   blocking forever. It works, but it needs `ForgeStation` to hold an
+   explicit `Lock` object instead of just being its own monitor, and
+   picking a good timeout/retry policy isn't obvious for this game.
+3. **Lock ordering by station id (what we went with).** Small,
+   localized change, keeps `ForgeStation` as a plain monitor, and
+   doesn't need any tuning.
 
 ### Consequences
 
@@ -270,23 +264,24 @@ See "Consequences" and "Risks" in `docs/ADR-001-deadlock-prevention.md`.
 
 ### Evidence
 
-See section 5 above and the "Evidence" section of the ADR (before/after
-`DeadlockProbe` output, plus 8 additional clean runs after the fix).
+Section 5 above, and the "Evidence" section of the ADR: before/after
+`DeadlockProbe` output plus the stress runs.
 
 ## 8. Conclusions
 
-1. The two bugs the starter shipped with were independent: the ledger
-   race (non-atomic counter + concurrently-mutated `ArrayList`) broke the
-   round invariant even when no deadlock occurred, while the unordered
-   nested locking in `LockPair` was a separate liveness bug that could
-   freeze the whole game regardless of whether the ledger was correct.
-   Both had to be fixed, but neither fix depended on the other.
-2. Neither fix required serializing the game: `ForgeLedger` needed one
-   small, private lock around two related writes, and `LockPair` needed
-   only a change of *order*, not a coarser lock — 8, 32 and 128 adventurers
-   all completed their full round counts with `invariant=OK` on every
-   single round.
-3. Deadlock prevention here came from removing one Coffman condition
-   (circular wait) via a total order over resources, which is a general
-   pattern applicable any time multiple threads need more than one
-   exclusive resource at a time — not specific to this game.
+1. The starter actually had two independent bugs. The ledger race
+   (non-atomic counter plus an `ArrayList` written from multiple
+   threads) broke the round invariant on its own, and the unordered
+   nested locking in `LockPair` was a separate liveness problem that
+   could freeze the game even if the ledger had been fine. Fixing one
+   didn't depend on fixing the other.
+2. Neither fix needed to serialize the game. `ForgeLedger` just needed
+   one small private lock around two writes that have to happen
+   together, and `LockPair` only needed a change in lock *order*, not
+   a bigger lock. 8, 32 and 128 adventurers all finished with
+   `invariant=OK` on every round.
+3. The deadlock went away by removing one Coffman condition (circular
+   wait) through a fixed order over the resources. That's a general
+   technique, not something specific to this game, and it applies any
+   time a thread needs to hold more than one exclusive resource at a
+   time.

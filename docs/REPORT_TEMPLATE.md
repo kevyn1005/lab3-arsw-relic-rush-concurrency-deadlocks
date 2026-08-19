@@ -58,14 +58,31 @@ DEADLOCK DETECTED
 
 ### 4.2 Coffman conditions in Relic Rush
 
-- Mutual exclusion:
-- Hold and wait:
-- No preemption:
-- Circular wait:
+- Mutual exclusion: Each `ForgeStation` is used as the monitor object
+  of a `synchronized` block in `LockPair.withBoth`. Only one thread can
+  hold the monitor of a given station at a time.
+
+- Hold and wait: In `LockPair.withBoth`, the thread acquires the lock
+  on `first` and keeps holding it while it blocks waiting for the lock
+  on `second`, never releasing `first` during that wait. The
+  `sleepQuietly(2)` call widens this window on purpose, making the
+  deadlock easier to reproduce.
+
+- No preemption: Java never forces a thread to release a `synchronized`
+  lock; only the owning thread can release it, by exiting the block.
+  Since the thread is blocked waiting for the second lock, it never
+  exits the block and therefore never releases the first one.
+
+- Circular wait: In `Adventurer.playTurn`, `first` and `second` are
+  picked with random indices, so one adventurer may call
+  `LockPair.withBoth(Anvil, Furnace)` while another calls
+  `LockPair.withBoth(Furnace, Anvil)`, creating a circular wait cycle
+  between the two threads — confirmed by the `DeadlockProbe` evidence
+  in section 4.1.
 
 ### 4.3 Wait-for graph
 
-Describe or add a diagram.
+![img.png](Diagram.png)
 
 ### 4.4 Fix
 

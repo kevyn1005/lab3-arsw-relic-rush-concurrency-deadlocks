@@ -120,4 +120,8 @@ public final class GameEngine {
         }
         return List.copyOf(result);
     }
+
+    public List<Adventurer> adventurers() {
+        return adventurers;
+    }
 }

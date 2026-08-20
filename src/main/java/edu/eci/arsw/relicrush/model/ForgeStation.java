@@ -1,11 +1,10 @@
 package edu.eci.arsw.relicrush.model;
 
-/**
- * Exclusive resource used to craft a relic. The station itself is the monitor.
- */
 public final class ForgeStation {
     private final int id;
     private final String name;
+
+    private volatile int occupantId = 0;
 
     public ForgeStation(int id, String name) {
         this.id = id;
@@ -18,6 +17,18 @@ public final class ForgeStation {
 
     public String name() {
         return name;
+    }
+
+    public void setOccupant(int playerId) {
+        this.occupantId = playerId;
+    }
+
+    public int occupantId() {
+        return occupantId;
+    }
+
+    public boolean isOccupied() {
+        return occupantId != 0;
     }
 
     @Override

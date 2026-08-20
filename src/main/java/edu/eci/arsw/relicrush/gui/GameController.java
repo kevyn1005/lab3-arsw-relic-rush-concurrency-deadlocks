@@ -11,7 +11,8 @@ public class GameController {
 
 
     public void start(GameConfig config) {
-        Adventurer.visualDelayMs = 400; // solo para visualización en GUI
+        Adventurer.visualDelayMs = 1200;   // 1.2 segundos craftando por estación
+        GameEngine.roundDelayMs = 2000;    // 2 segundos de pausa entre rondas
 
         engine = new GameEngine(config);
 

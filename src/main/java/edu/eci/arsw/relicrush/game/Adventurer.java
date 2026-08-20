@@ -1,4 +1,3 @@
-
 package edu.eci.arsw.relicrush.game;
 
 import edu.eci.arsw.relicrush.concurrency.ForgeLedger;
@@ -12,9 +11,6 @@ import java.util.SplittableRandom;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 
-/**
- * One player = one platform thread. This is intentional for the lab.
- */
 public final class Adventurer extends Thread {
     private final int playerId;
     private final List<ForgeStation> stations;
@@ -29,13 +25,12 @@ public final class Adventurer extends Thread {
     private int score;
 
     private volatile AdventurerState visualState = AdventurerState.DONE_WAITING_BARRIER;
+    private volatile ForgeStation currentFirst;
+    private volatile ForgeStation currentSecond;
 
     public AdventurerState visualState() {
         return visualState;
     }
-
-    private volatile ForgeStation currentFirst;
-    private volatile ForgeStation currentSecond;
 
     public ForgeStation currentFirstStation() {
         return currentFirst;
@@ -101,6 +96,8 @@ public final class Adventurer extends Thread {
 
         LockPair.withBoth(first, second, () -> {
             visualState = AdventurerState.CRAFTING;
+            first.setOccupant(playerId);
+            second.setOccupant(playerId);
 
             if (visualDelayMs > 0) {
                 try {
@@ -112,6 +109,9 @@ public final class Adventurer extends Thread {
 
             score++;
             ledger.record(new ForgeEvent(round, getName(), first.name(), second.name(), score));
+
+            first.setOccupant(0);
+            second.setOccupant(0);
         });
 
         visualState = AdventurerState.DONE_WAITING_BARRIER;

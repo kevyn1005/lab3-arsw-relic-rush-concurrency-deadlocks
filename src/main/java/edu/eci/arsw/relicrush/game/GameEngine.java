@@ -21,6 +21,21 @@ public final class GameEngine {
     private final CyclicBarrier roundEnd;
     private final AtomicBoolean finished = new AtomicBoolean(false);
 
+    public static volatile int roundDelayMs = 0; // solo la GUI lo activa
+    private volatile int currentRound = 0;
+
+    public int currentRound() {
+        return currentRound;
+    }
+
+    public List<ForgeStation> stations() {
+        return stations;
+    }
+
+    public List<Adventurer> adventurers() {
+        return adventurers;
+    }
+
     public GameEngine(GameConfig config) {
         this.config = config;
         this.stations = createStations(config.stations());
@@ -43,13 +58,16 @@ public final class GameEngine {
         adventurers.forEach(Thread::start);
 
         for (int round = 1; round <= config.rounds(); round++) {
-            // Scenario 2: workers wait until the coordinator starts the round.
-            roundStart.await();
+            currentRound = round;
 
-            // Scenario 3: coordinator waits until every worker completes the round.
+            roundStart.await();
             roundEnd.await();
 
             printRoundSnapshot(round);
+
+            if (roundDelayMs > 0) {
+                Thread.sleep(roundDelayMs);
+            }
         }
 
         for (Adventurer adventurer : adventurers) {
@@ -120,4 +138,5 @@ public final class GameEngine {
         }
         return List.copyOf(result);
     }
+
 }

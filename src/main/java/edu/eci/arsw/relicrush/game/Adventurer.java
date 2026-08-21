@@ -2,6 +2,7 @@ package edu.eci.arsw.relicrush.game;
 
 import edu.eci.arsw.relicrush.concurrency.ForgeLedger;
 import edu.eci.arsw.relicrush.concurrency.LockPair;
+import edu.eci.arsw.relicrush.gui.AdventurerState;
 import edu.eci.arsw.relicrush.model.ForgeEvent;
 import edu.eci.arsw.relicrush.model.ForgeStation;
 
@@ -10,9 +11,6 @@ import java.util.SplittableRandom;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 
-/**
- * One player = one platform thread. This is intentional for the lab.
- */
 public final class Adventurer extends Thread {
     private final int playerId;
     private final List<ForgeStation> stations;
@@ -22,7 +20,25 @@ public final class Adventurer extends Thread {
     private final int rounds;
     private final SplittableRandom random;
 
+    public static volatile int visualDelayMs = 0;
+
     private int score;
+
+    private volatile AdventurerState visualState = AdventurerState.DONE_WAITING_BARRIER;
+    private volatile ForgeStation currentFirst;
+    private volatile ForgeStation currentSecond;
+
+    public AdventurerState visualState() {
+        return visualState;
+    }
+
+    public ForgeStation currentFirstStation() {
+        return currentFirst;
+    }
+
+    public ForgeStation currentSecondStation() {
+        return currentSecond;
+    }
 
     public Adventurer(
             int playerId,
@@ -74,15 +90,30 @@ public final class Adventurer extends Thread {
         ForgeStation first = stations.get(firstIndex);
         ForgeStation second = stations.get(secondIndex);
 
+        currentFirst = first;
+        currentSecond = second;
+        visualState = AdventurerState.WAITING_FOR_STATION;
+
         LockPair.withBoth(first, second, () -> {
-            // score is only written by this player's thread.
+            visualState = AdventurerState.CRAFTING;
+            first.setOccupant(playerId);
+            second.setOccupant(playerId);
+
+            if (visualDelayMs > 0) {
+                try {
+                    Thread.sleep(visualDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
             score++;
-            ledger.record(new ForgeEvent(
-                    round,
-                    getName(),
-                    first.name(),
-                    second.name(),
-                    score));
+            ledger.record(new ForgeEvent(round, getName(), first.name(), second.name(), score));
+
+            first.setOccupant(0);
+            second.setOccupant(0);
         });
+
+        visualState = AdventurerState.DONE_WAITING_BARRIER;
     }
 }

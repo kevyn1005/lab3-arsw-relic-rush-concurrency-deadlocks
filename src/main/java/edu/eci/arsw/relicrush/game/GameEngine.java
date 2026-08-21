@@ -21,6 +21,11 @@ public final class GameEngine {
     private final CyclicBarrier roundEnd;
     private final AtomicBoolean finished = new AtomicBoolean(false);
 
+    // --- Control de pausa / detención ---
+    private final Object pauseLock = new Object();
+    private volatile boolean paused = false;
+    private volatile boolean stopRequested = false;
+
     public static volatile int roundDelayMs = 0; // solo la GUI lo activa
     private volatile int currentRound = 0;
 
@@ -34,6 +39,14 @@ public final class GameEngine {
 
     public List<Adventurer> adventurers() {
         return adventurers;
+    }
+
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public boolean isStopped() {
+        return stopRequested;
     }
 
     public GameEngine(GameConfig config) {
@@ -53,11 +66,49 @@ public final class GameEngine {
         }
     }
 
+    /** Pausa el avance de rondas. Los adventurers quedan bloqueados en la barrera de forma segura. */
+    public void pauseGame() {
+        paused = true;
+    }
+
+    /** Reanuda el avance de rondas si estaba en pausa. */
+    public void resumeGame() {
+        synchronized (pauseLock) {
+            paused = false;
+            pauseLock.notifyAll();
+        }
+    }
+
+    /** Detiene el juego por completo. Interrumpe a todos los adventurers de forma controlada. */
+    public void stopGame() {
+        stopRequested = true;
+        resumeGame(); // por si estaba en pausa, lo despierta para que note el stop
+        for (Adventurer a : adventurers) {
+            a.interrupt();
+        }
+    }
+
+    private void waitWhilePaused() throws InterruptedException {
+        synchronized (pauseLock) {
+            while (paused && !stopRequested) {
+                pauseLock.wait();
+            }
+        }
+    }
+
     public void run() throws InterruptedException, BrokenBarrierException {
         startDeadlockWatchdog();
         adventurers.forEach(Thread::start);
 
         for (int round = 1; round <= config.rounds(); round++) {
+            if (stopRequested) {
+                break;
+            }
+            waitWhilePaused();
+            if (stopRequested) {
+                break;
+            }
+
             currentRound = round;
 
             roundStart.await();
@@ -67,6 +118,12 @@ public final class GameEngine {
 
             if (roundDelayMs > 0) {
                 Thread.sleep(roundDelayMs);
+            }
+        }
+
+        if (stopRequested) {
+            for (Adventurer adventurer : adventurers) {
+                adventurer.interrupt();
             }
         }
 

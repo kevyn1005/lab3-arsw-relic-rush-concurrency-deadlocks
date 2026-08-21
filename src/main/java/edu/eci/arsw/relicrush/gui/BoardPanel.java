@@ -13,6 +13,11 @@ public class BoardPanel extends JPanel {
 
     private final Image background;
 
+    // --- Imágenes de estado de estación (reemplazan los rectángulos de color) ---
+    private final Image stationFreeImg;
+    private final Image stationOccupiedImg;
+    private final Image stationDisabledImg;
+
     // --- Gato (skin para playerId impar) ---
     private final Image[] catSleepingFrames;
     private final Image[] catCollectingFrames;
@@ -47,22 +52,18 @@ public class BoardPanel extends JPanel {
     private GameController controller;
 
     private static final Point[] STATION_POSITIONS = {
-            new Point(120, 85),
-            new Point(250, 72),
-            new Point(375, 72),
-            new Point(520, 100),
-            new Point(120, 305),
-            new Point(252, 320),
-            new Point(380, 320),
-            new Point(500, 290),
+            new Point(120, 100),
+            new Point(250, 80),
+            new Point(375, 80),
+            new Point(520, 110),
+            new Point(120, 315),
+            new Point(252, 335),
+            new Point(380, 335),
+            new Point(500, 310),
     };
 
     private static final Point BOARD_CENTER = new Point(345, 226);
     private static final int CAT_OFFSET = 26;
-
-    private static final Color STATION_FREE = new Color(70, 200, 90, 130);
-    private static final Color STATION_OCCUPIED = new Color(220, 60, 60, 130);
-    private static final Color STATION_DISABLED = new Color(120, 120, 120, 110);
 
     private static final Color[] PLAYER_COLORS = {
             new Color(80, 200, 255),
@@ -77,6 +78,10 @@ public class BoardPanel extends JPanel {
 
     public BoardPanel() {
         background = loadImage("/Fondo.jpg");
+
+        stationFreeImg = loadImage("/Sprites_Lab3/posters/Libre.png");
+        stationOccupiedImg = loadImage("/Sprites_Lab3/posters/Ocupado.png");
+        stationDisabledImg = loadImage("/Sprites_Lab3/posters/No_Disponible.png");
 
         catSleepingFrames = loadFrames("/Sprites_Lab3/MagicCat/Sleeping/", CAT_SLEEPING_COUNT);
         catCollectingFrames = loadFrames("/Sprites_Lab3/MagicCat/Collecting/", CAT_COLLECTING_COUNT);
@@ -199,32 +204,21 @@ public class BoardPanel extends JPanel {
         for (int i = 0; i < STATION_POSITIONS.length; i++) {
             Point p = STATION_POSITIONS[i];
 
-            Color statusColor;
+            Image statusImg;
             if (allStations == null || i >= allStations.size()) {
-                statusColor = STATION_DISABLED;
+                statusImg = stationDisabledImg;
             } else {
-                statusColor = allStations.get(i).isOccupied() ? STATION_OCCUPIED : STATION_FREE;
+                statusImg = allStations.get(i).isOccupied() ? stationOccupiedImg : stationFreeImg;
             }
 
-            g2.setColor(statusColor);
-            g2.fillRect(p.x, p.y, CAT_SIZE, CAT_SIZE);
-            g2.setColor(Color.WHITE);
-            g2.drawString("E" + (i + 1), p.x + 5, p.y + 15);
+            int posterOffsetY = 30;
+            g2.drawImage(statusImg, p.x, p.y + posterOffsetY, CAT_SIZE, CAT_SIZE, this);
         }
 
-        String[] cornerLabels = {"Q1", "Q2", "Q3", "Q4"};
-        for (int i = 0; i < QUEUE_CORNER_POSITIONS.length; i++) {
-            Point p = QUEUE_CORNER_POSITIONS[i];
-            g2.setColor(new Color(255, 255, 255, 70));
-            g2.fillRect(p.x, p.y, CAT_SIZE, CAT_SIZE);
-            g2.setColor(Color.BLACK);
-            g2.drawString(cornerLabels[i], p.x + 5, p.y + 15);
-        }
 
-        g2.setColor(new Color(255, 255, 255, 100));
-        g2.fillRect(SLEEP_ZONE_X, SLEEP_ZONE_Y, 300, CAT_SIZE);
+
         g2.setColor(Color.BLACK);
-        g2.drawString("SLEEP ZONE", SLEEP_ZONE_X, SLEEP_ZONE_Y - 5);
+
 
         if (!gameActive) {
             return;

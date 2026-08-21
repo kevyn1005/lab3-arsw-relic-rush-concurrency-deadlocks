@@ -2,11 +2,11 @@
 
 ## Team
 
-| Student | ID | GitHub |
-|---|---|---|
-| | | |
-| | | |
-| | | |
+| Student                         | ID | GitHub |
+|---------------------------------|---|---|
+| KEVYN DANIEL FORERO GONZALEZ    | 1000095428|kevyn1005 |
+| MARIA JULIANA RODRIGUEZ CAICECO |1000095732 |JuliRodC|
+| HEVER BARRERA BATERO            | 1000094509|heverthisday |
 
 Repository: `https://github.com/kevyn1005/lab3-arsw-relic-rush-concurrency-deadlocks.git`
 
@@ -15,14 +15,24 @@ Final commit: `SHA`
 ## 1. Baseline observations
 
 - Command(s) executed:
-- What happened?
-- Was the round invariant always preserved?
-- Did the game stop unexpectedly?
+>java -cp target/classes edu.eci.arsw.relicrush.app.LedgerRaceProbe 64 5000
 
+>java -cp target/classes edu.eci.arsw.relicrush.app.RelicRushMain
+- What happened?
+> LedgerRaceProbe lost most of the writes it was supposed to record: out of 320000 expected updates (64 threads × 5000 writes), only 7468 made it into totalCrafted, and 305989 into the event list. Running RelicRushMain printed invariant=BROKEN starting from round 1, and since LockPair still had the unordered locking bug at the same time, most runs simply froze and got killed by the game's own watchdog before finishing
+- Was the round invariant always preserved?
+> No, not even once we let it run for more than a couple of rounds. Any time the race window in ForgeLedger.record got hit, scoreSum, ledger.totalCrafted(), and events.size() stopped matching each other
+- Did the game stop unexpectedly?
+> Yes, in most attempts. GameEngine.startDeadlockWatchdog detected a real JVM deadlock through ThreadMXBean.findDeadlockedThreads() and called System.exit(2) well before the 25 rounds were completed.
 Evidence:
 
 ```text
-PASTE RELEVANT OUTPUT
+PS C:\Users\Kevyn\Desktop\9 semestre\ARSW repos\Lab03> java -cp target/classes edu.eci.arsw.relicrush.app.LedgerRaceProbe
+expected=64000 totalCrafted=2851 eventCount=55562 invariant=BROKEN
+
+PS C:\Users\Kevyn\Desktop\9 semestre\ARSW repos\Lab03> java -cp target/classes edu.eci.arsw.relicrush.app.LedgerRaceProbe 64 5000
+expected=320000 totalCrafted=6304 eventCount=285686 invariant=BROKEN
+
 ```
 
 ## 2. Coordination analysis
@@ -41,8 +51,8 @@ Explain the responsibility of both barriers:
 
 | Shared state | Problem | Invariant at risk | Solution | Why this solution? |
 |---|---|---|---|---|
-| | | | | |
-| | | | | |
+| `totalCrafted` (int, en `ForgeLedger`) | Operación `read-modify-write` no atómica (`int next = totalCrafted + 1; ...; totalCrafted = next;`). Dos hilos pueden leer el mismo valor antes de que ninguno escriba, perdiendo incrementos. | `scoreSum == ForgeLedger.totalCrafted == eventCount` | Envolver el incremento dentro de un bloque `synchronized(lock)` en `record()` | Un `synchronized` compartido para ambas escrituras (contador + lista) las trata como una sola operación atómica. Es más simple y correcto que usar `AtomicInteger` por separado, porque `AtomicInteger` solo protegería el contador de forma aislada, dejando una ventana entre "actualizar el contador" y "agregar el evento a la lista" donde otro hilo podría leer un estado inconsistente. |
+| `events` (`ArrayList<ForgeEvent>`, en `ForgeLedger`) | `ArrayList` no es thread-safe; `add()` concurrente desde múltiples hilos puede corromper la estructura interna, perder elementos o lanzar excepciones (`ArrayIndexOutOfBoundsException`). Evidencia: con 64 hilos x 5000 iteraciones, `eventCount=285686` en vez de los `320000` esperados. | mismo invariante de arriba | mismo bloque `synchronized(lock)`, envolviendo también `events.add(event)` | Se descartó `CopyOnWriteArrayList` porque copia todo el arreglo en cada `add()`, siendo muy costoso con escrituras frecuentes (que es exactamente el patrón de este juego: cada crafteo exitoso escribe). El `synchronized` compartido con el contador además evita la ventana de inconsistencia mencionada arriba entre ambas escrituras. |
 
 ## 4. Deadlock diagnosis
 

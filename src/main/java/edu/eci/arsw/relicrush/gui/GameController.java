@@ -27,6 +27,24 @@ public class GameController {
         engineThread.start();
     }
 
+    public void pause() {
+        if (engine != null) {
+            engine.pauseGame();
+        }
+    }
+
+    public void resume() {
+        if (engine != null) {
+            engine.resumeGame();
+        }
+    }
+
+    public void stop() {
+        if (engine != null) {
+            engine.stopGame();
+        }
+    }
+
     public GameEngine engine() {
         return engine;
     }

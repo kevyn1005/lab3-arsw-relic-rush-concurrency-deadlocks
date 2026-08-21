@@ -12,16 +12,25 @@ import java.util.List;
 public class BoardPanel extends JPanel {
 
     private final Image background;
-    private final Image[] sleepingFrames;
-    private final Image[] collectingFrames;
 
-    private int sleepingFrame = 0;
-    private int collectingFrame = 0;
+    // --- Gato (skin para playerId impar) ---
+    private final Image[] catSleepingFrames;
+    private final Image[] catCollectingFrames;
+    private static final int CAT_SLEEPING_COUNT = 6;
+    private static final int CAT_COLLECTING_COUNT = 7;
+    private int catSleepFrame = 0;
+    private int catCollectFrame = 0;
 
-    private static final int SLEEPING_FRAME_COUNT = 6;
-    private static final int COLLECTING_FRAME_COUNT = 7;
-    private static final int ANIMATION_DELAY_MS = 200;
+    // --- Pingüino (skin para playerId par) ---
+    private final Image[] penguinWaitingFrames; // "Hiii", ping-pong 1->12->1
+    private final Image[] penguinCollectingFrames; // normal, 19 frames
+    private static final int PENGUIN_WAITING_COUNT = 12;
+    private static final int PENGUIN_COLLECTING_COUNT = 19;
+    private int penguinWaitFrame = 0;
+    private int penguinWaitDirection = 1; // 1 = avanzando, -1 = retrocediendo
+    private int penguinCollectFrame = 0;
 
+    private static final int ANIMATION_DELAY_MS = 100;
     private static final int CAT_SIZE = 60;
     private static final int CAT_HALF = CAT_SIZE / 2;
 
@@ -51,10 +60,9 @@ public class BoardPanel extends JPanel {
     private static final Point BOARD_CENTER = new Point(345, 226);
     private static final int CAT_OFFSET = 26;
 
-    // Colores de ESTADO de estación (no de referencia genérica)
-    private static final Color STATION_FREE = new Color(70, 200, 90, 130);      // verde
-    private static final Color STATION_OCCUPIED = new Color(220, 60, 60, 130);  // rojo
-    private static final Color STATION_DISABLED = new Color(120, 120, 120, 110);// gris
+    private static final Color STATION_FREE = new Color(70, 200, 90, 130);
+    private static final Color STATION_OCCUPIED = new Color(220, 60, 60, 130);
+    private static final Color STATION_DISABLED = new Color(120, 120, 120, 110);
 
     private static final Color[] PLAYER_COLORS = {
             new Color(80, 200, 255),
@@ -70,21 +78,28 @@ public class BoardPanel extends JPanel {
     public BoardPanel() {
         background = loadImage("/Fondo.jpg");
 
-        sleepingFrames = new Image[SLEEPING_FRAME_COUNT];
-        for (int i = 0; i < SLEEPING_FRAME_COUNT; i++) {
-            sleepingFrames[i] = loadImage("/Sprites_Lab3/Sleeping/" + (i + 1) + ".png");
-        }
+        catSleepingFrames = loadFrames("/Sprites_Lab3/MagicCat/Sleeping/", CAT_SLEEPING_COUNT);
+        catCollectingFrames = loadFrames("/Sprites_Lab3/MagicCat/Collecting/", CAT_COLLECTING_COUNT);
 
-        collectingFrames = new Image[COLLECTING_FRAME_COUNT];
-        for (int i = 0; i < COLLECTING_FRAME_COUNT; i++) {
-            collectingFrames[i] = loadImage("/Sprites_Lab3/Collecting/" + (i + 1) + ".png");
-        }
+        penguinWaitingFrames = loadFrames("/Sprites_Lab3/Penguin/Hiii/", PENGUIN_WAITING_COUNT);
+        penguinCollectingFrames = loadFrames("/Sprites_Lab3/Penguin/Collecting/", PENGUIN_COLLECTING_COUNT);
 
         setPreferredSize(new Dimension(696, 995));
 
         Timer animationTimer = new Timer(ANIMATION_DELAY_MS, e -> {
-            sleepingFrame = (sleepingFrame + 1) % SLEEPING_FRAME_COUNT;
-            collectingFrame = (collectingFrame + 1) % COLLECTING_FRAME_COUNT;
+            catSleepFrame = (catSleepFrame + 1) % CAT_SLEEPING_COUNT;
+            catCollectFrame = (catCollectFrame + 1) % CAT_COLLECTING_COUNT;
+            penguinCollectFrame = (penguinCollectFrame + 1) % PENGUIN_COLLECTING_COUNT;
+
+            penguinWaitFrame += penguinWaitDirection;
+            if (penguinWaitFrame >= PENGUIN_WAITING_COUNT - 1) {
+                penguinWaitFrame = PENGUIN_WAITING_COUNT - 1;
+                penguinWaitDirection = -1;
+            } else if (penguinWaitFrame <= 0) {
+                penguinWaitFrame = 0;
+                penguinWaitDirection = 1;
+            }
+
             repaint();
         });
         animationTimer.start();
@@ -94,12 +109,37 @@ public class BoardPanel extends JPanel {
         this.controller = controller;
     }
 
+    private Image[] loadFrames(String basePath, int count) {
+        Image[] frames = new Image[count];
+        for (int i = 0; i < count; i++) {
+            frames[i] = loadImage(basePath + (i + 1) + ".png");
+        }
+        return frames;
+    }
+
     private Image loadImage(String path) {
         URL url = getClass().getResource(path);
         if (url == null) {
             throw new IllegalStateException("No se encontró " + path + " en el classpath.");
         }
         return new ImageIcon(url).getImage();
+    }
+
+    private boolean isCatSkin(int playerId) {
+        return playerId % 2 != 0;
+    }
+
+    private Image waitingFrameFor(int playerId) {
+        return isCatSkin(playerId) ? catSleepingFrames[catSleepFrame] : penguinWaitingFrames[penguinWaitFrame];
+    }
+
+    private Image collectingFrameFor(int playerId) {
+        return isCatSkin(playerId) ? catCollectingFrames[catCollectFrame] : penguinCollectingFrames[penguinCollectFrame];
+    }
+
+    private Image sleepZoneFrameFor(int playerId) {
+        // En la SLEEP ZONE usamos la misma animación de "espera" de cada especie
+        return waitingFrameFor(playerId);
     }
 
     private Point stationCenter(int index) {
@@ -155,7 +195,6 @@ public class BoardPanel extends JPanel {
         boolean gameActive = controller != null && controller.engine() != null;
         List<ForgeStation> allStations = gameActive ? controller.engine().stations() : null;
 
-        // --- Estado real de cada estación: libre / ocupada / no usada en esta partida ---
         g2.setFont(new Font("Arial", Font.BOLD, 12));
         for (int i = 0; i < STATION_POSITIONS.length; i++) {
             Point p = STATION_POSITIONS[i];
@@ -204,12 +243,12 @@ public class BoardPanel extends JPanel {
         for (Adventurer a : adventurers) {
             switch (a.visualState()) {
                 case DONE_WAITING_BARRIER -> {
-                    g2.drawImage(sleepingFrames[sleepingFrame], sleepX, sleepY, CAT_SIZE, CAT_SIZE, this);
+                    g2.drawImage(sleepZoneFrameFor(a.playerId()), sleepX, sleepY, CAT_SIZE, CAT_SIZE, this);
                     sleepX += CAT_SIZE + 5;
                 }
                 case WAITING_FOR_STATION -> {
                     Point p = QUEUE_CORNER_POSITIONS[queueCornerIndex % QUEUE_CORNER_POSITIONS.length];
-                    g2.drawImage(sleepingFrames[sleepingFrame], p.x, p.y, CAT_SIZE, CAT_SIZE, this);
+                    g2.drawImage(waitingFrameFor(a.playerId()), p.x, p.y, CAT_SIZE, CAT_SIZE, this);
                     queueCornerIndex++;
                 }
                 case CRAFTING -> {
@@ -233,7 +272,7 @@ public class BoardPanel extends JPanel {
 
                     drawMagicCurve(g2, catCenter, farCenter, color);
 
-                    g2.drawImage(collectingFrames[collectingFrame], catTopLeft.x, catTopLeft.y, CAT_SIZE, CAT_SIZE, this);
+                    g2.drawImage(collectingFrameFor(a.playerId()), catTopLeft.x, catTopLeft.y, CAT_SIZE, CAT_SIZE, this);
                     g2.setColor(Color.WHITE);
                     g2.drawString("P" + a.playerId(), catTopLeft.x, catTopLeft.y + CAT_SIZE + 12);
                 }

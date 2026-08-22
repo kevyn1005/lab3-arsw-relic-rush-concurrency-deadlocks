@@ -29,6 +29,20 @@ public final class GameEngine {
     public static volatile int roundDelayMs = 0; // solo la GUI lo activa
     private volatile int currentRound = 0;
 
+    // Se actualiza una sola vez por ronda, justo despues de roundEnd.await(),
+    // que es el unico momento en que todos los aventureros ya terminaron su
+    // turno. Si se llamara invariantOk() en cualquier otro momento (por
+    // ejemplo desde el Timer de la GUI mientras alguien todavia esta
+    // craftando) podria dar ROTO de forma pasajera sin que sea un bug real,
+    // porque score++ y ledger.record() no pasan en el mismo instante. Este
+    // campo evita ese falso positivo: la GUI siempre lee el ultimo resultado
+    // valido, calculado en el momento correcto.
+    private volatile boolean lastInvariantOk = true;
+
+    public boolean lastInvariantOk() {
+        return lastInvariantOk;
+    }
+
     public int currentRound() {
         return currentRound;
     }
@@ -130,6 +144,7 @@ public final class GameEngine {
             roundStart.await();
             roundEnd.await();
 
+            lastInvariantOk = invariantOk();
             printRoundSnapshot(round);
 
             if (roundDelayMs > 0) {

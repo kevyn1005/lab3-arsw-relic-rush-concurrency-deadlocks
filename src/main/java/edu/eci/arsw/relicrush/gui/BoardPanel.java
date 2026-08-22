@@ -268,6 +268,13 @@ public class BoardPanel extends JPanel {
         }
     }
 
+    private void drawInvariantStatus(Graphics2D g2, boolean invariantOk) {
+        String message = "Invariante: " + (invariantOk ? "OK" : "ROTO");
+        g2.setFont(new Font("Arial", Font.BOLD, 14));
+        g2.setColor(invariantOk ? new Color(90, 230, 120) : new Color(235, 70, 70));
+        g2.drawString(message, getWidth() / 2 - 45, 52);
+    }
+
     private void drawFinishedBanner(Graphics2D g2, boolean invariantOk) {
         String message = "SIMULACION TERMINADA - invariante " + (invariantOk ? "OK" : "ROTO");
         g2.setFont(new Font("Arial", Font.BOLD, 20));
@@ -319,6 +326,7 @@ public class BoardPanel extends JPanel {
         g2.setFont(new Font("Arial", Font.BOLD, 22));
         g2.setColor(Color.WHITE);
         g2.drawString("ROUND " + round, getWidth() / 2 - 50, 30);
+        drawInvariantStatus(g2, controller.engine().lastInvariantOk());
 
         List<Adventurer> adventurers = controller.engine().adventurers();
         drawScoreboard(g2, adventurers);
@@ -368,7 +376,7 @@ public class BoardPanel extends JPanel {
         }
 
         if (controller.engine().isFinished()) {
-            drawFinishedBanner(g2, controller.engine().invariantOk());
+            drawFinishedBanner(g2, controller.engine().lastInvariantOk());
         }
     }
 }

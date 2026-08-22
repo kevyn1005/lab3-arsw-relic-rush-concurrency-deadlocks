@@ -282,3 +282,4 @@ Section 5 above, and the "Evidence" section of the ADR: before/after
    technique, not something specific to this game, and it applies any
    time a thread needs to hold more than one exclusive resource at a
    time.
+4. During the development of this lab we used AI assistance as general support in different parts of the process, such as in the development of the GUI bonus. We used AI assistance (Claude) as guidance throughout the whole process; it helped us better understand the flow of the game, solve visual and code structure problems (positions, animations, handling of player states), and think through how to connect the interface with the game logic without affecting the synchronization mechanisms we had already implemented in the previous parts of the lab. Additionally, we used Gemini to support us in the visual design of the board background and the posters/signs that indicate the state of the stations.

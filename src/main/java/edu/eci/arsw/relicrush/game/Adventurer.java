@@ -22,7 +22,10 @@ public final class Adventurer extends Thread {
 
     public static volatile int visualDelayMs = 0;
 
-    private int score;
+    // volatile porque ahora la GUI lee score() desde el hilo de Swing mientras
+    // este hilo lo sigue incrementando en playTurn(). Sin esto no hay garantia
+    // de que el hilo de la GUI vea el ultimo valor escrito.
+    private volatile int score;
 
     private volatile AdventurerState visualState = AdventurerState.DONE_WAITING_BARRIER;
     private volatile ForgeStation currentFirst;

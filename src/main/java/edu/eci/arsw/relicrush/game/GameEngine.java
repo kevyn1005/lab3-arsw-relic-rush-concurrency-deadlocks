@@ -49,6 +49,22 @@ public final class GameEngine {
         return stopRequested;
     }
 
+    public boolean isFinished() {
+        return finished.get();
+    }
+
+    // Misma formula que ya se usaba en printRoundSnapshot: si scoreSum,
+    // ledger.totalCrafted() y ledger.eventCount() no coinciden es porque algo
+    // se corrio sin pasar por LockPair o sin pasar por ForgeLedger.record().
+    // No exponemos el ledger en si, solo el resultado de la comparacion, asi
+    // que la GUI no necesita saber nada de como esta sincronizado por dentro.
+    public boolean invariantOk() {
+        int scoreSum = adventurers.stream().mapToInt(Adventurer::score).sum();
+        int ledgerTotal = ledger.totalCrafted();
+        int eventCount = ledger.eventCount();
+        return scoreSum == ledgerTotal && ledgerTotal == eventCount;
+    }
+
     public GameEngine(GameConfig config) {
         this.config = config;
         this.stations = createStations(config.stations());

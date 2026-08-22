@@ -13,31 +13,72 @@ public class BoardPanel extends JPanel {
 
     private final Image background;
 
-    // --- Imágenes de estado de estación (reemplazan los rectángulos de color) ---
+    // --- Imagenes de estado de estacion ---
     private final Image stationFreeImg;
     private final Image stationOccupiedImg;
     private final Image stationDisabledImg;
 
-    // --- Gato (skin para playerId impar) ---
-    private final Image[] catSleepingFrames;
-    private final Image[] catCollectingFrames;
-    private static final int CAT_SLEEPING_COUNT = 6;
-    private static final int CAT_COLLECTING_COUNT = 7;
-    private int catSleepFrame = 0;
-    private int catCollectFrame = 0;
+    // --- Skins de los aventureros ---
+    // Cada skin es una carpeta bajo Sprites_Lab3 con dos animaciones: una de
+    // espera y otra de "craftear". Para meter una skin nueva solo hay que
+    // agregar la carpeta con las imagenes numeradas 1.png, 2.png, ... y una
+    // linea nueva en SKIN_DEFINITIONS. El jugador N usa la skin numero
+    // (N - 1) % cantidad de skins cargadas, asi que con 2 skins y 8 jugadores
+    // las skins se repiten, pero apenas se agregan mas carpetas la variedad
+    // crece sola sin tocar el resto del panel.
+    private record SkinDefinition(
+            String waitingFolder,
+            int waitingCount,
+            boolean pingPongWaiting,
+            String collectingFolder,
+            int collectingCount) {
+    }
 
-    // --- Pingüino (skin para playerId par) ---
-    private final Image[] penguinWaitingFrames; // "Hiii", ping-pong 1->12->1
-    private final Image[] penguinCollectingFrames; // normal, 19 frames
-    private static final int PENGUIN_WAITING_COUNT = 12;
-    private static final int PENGUIN_COLLECTING_COUNT = 19;
-    private int penguinWaitFrame = 0;
-    private int penguinWaitDirection = 1; // 1 = avanzando, -1 = retrocediendo
-    private int penguinCollectFrame = 0;
+    private static final SkinDefinition[] SKIN_DEFINITIONS = {
+            new SkinDefinition("/Sprites_Lab3/MagicCat/Sleeping/", 6, false,
+                    "/Sprites_Lab3/MagicCat/Collecting/", 7),
+            new SkinDefinition("/Sprites_Lab3/Penguin/Hiii/", 12, true,
+                    "/Sprites_Lab3/Penguin/Collecting/", 19),
+            // agregar aca una SkinDefinition por cada skin nueva que se sume
+            // a Sprites_Lab3
+    };
+
+    private static final class LoadedSkin {
+        final Image[] waitingFrames;
+        final Image[] collectingFrames;
+        final boolean pingPongWaiting;
+        int waitFrame = 0;
+        int waitDirection = 1;
+        int collectFrame = 0;
+
+        LoadedSkin(SkinDefinition def) {
+            this.waitingFrames = loadFrames(def.waitingFolder(), def.waitingCount());
+            this.collectingFrames = loadFrames(def.collectingFolder(), def.collectingCount());
+            this.pingPongWaiting = def.pingPongWaiting();
+        }
+
+        void advance() {
+            collectFrame = (collectFrame + 1) % collectingFrames.length;
+            if (pingPongWaiting) {
+                waitFrame += waitDirection;
+                if (waitFrame >= waitingFrames.length - 1) {
+                    waitFrame = waitingFrames.length - 1;
+                    waitDirection = -1;
+                } else if (waitFrame <= 0) {
+                    waitFrame = 0;
+                    waitDirection = 1;
+                }
+            } else {
+                waitFrame = (waitFrame + 1) % waitingFrames.length;
+            }
+        }
+    }
+
+    private final LoadedSkin[] skins;
 
     private static final int ANIMATION_DELAY_MS = 100;
-    private static final int CAT_SIZE = 60;
-    private static final int CAT_HALF = CAT_SIZE / 2;
+    private static final int SPRITE_SIZE = 60;
+    private static final int SPRITE_HALF = SPRITE_SIZE / 2;
 
     private static final int SLEEP_ZONE_X = 120;
     private static final int SLEEP_ZONE_Y = 580;
@@ -63,7 +104,7 @@ public class BoardPanel extends JPanel {
     };
 
     private static final Point BOARD_CENTER = new Point(345, 226);
-    private static final int CAT_OFFSET = 26;
+    private static final int SPRITE_OFFSET = 26;
 
     private static final Color[] PLAYER_COLORS = {
             new Color(80, 200, 255),
@@ -83,28 +124,17 @@ public class BoardPanel extends JPanel {
         stationOccupiedImg = loadImage("/Sprites_Lab3/posters/Ocupado.png");
         stationDisabledImg = loadImage("/Sprites_Lab3/posters/No_Disponible.png");
 
-        catSleepingFrames = loadFrames("/Sprites_Lab3/MagicCat/Sleeping/", CAT_SLEEPING_COUNT);
-        catCollectingFrames = loadFrames("/Sprites_Lab3/MagicCat/Collecting/", CAT_COLLECTING_COUNT);
-
-        penguinWaitingFrames = loadFrames("/Sprites_Lab3/Penguin/Hiii/", PENGUIN_WAITING_COUNT);
-        penguinCollectingFrames = loadFrames("/Sprites_Lab3/Penguin/Collecting/", PENGUIN_COLLECTING_COUNT);
+        skins = new LoadedSkin[SKIN_DEFINITIONS.length];
+        for (int i = 0; i < SKIN_DEFINITIONS.length; i++) {
+            skins[i] = new LoadedSkin(SKIN_DEFINITIONS[i]);
+        }
 
         setPreferredSize(new Dimension(696, 995));
 
         Timer animationTimer = new Timer(ANIMATION_DELAY_MS, e -> {
-            catSleepFrame = (catSleepFrame + 1) % CAT_SLEEPING_COUNT;
-            catCollectFrame = (catCollectFrame + 1) % CAT_COLLECTING_COUNT;
-            penguinCollectFrame = (penguinCollectFrame + 1) % PENGUIN_COLLECTING_COUNT;
-
-            penguinWaitFrame += penguinWaitDirection;
-            if (penguinWaitFrame >= PENGUIN_WAITING_COUNT - 1) {
-                penguinWaitFrame = PENGUIN_WAITING_COUNT - 1;
-                penguinWaitDirection = -1;
-            } else if (penguinWaitFrame <= 0) {
-                penguinWaitFrame = 0;
-                penguinWaitDirection = 1;
+            for (LoadedSkin skin : skins) {
+                skin.advance();
             }
-
             repaint();
         });
         animationTimer.start();
@@ -114,7 +144,7 @@ public class BoardPanel extends JPanel {
         this.controller = controller;
     }
 
-    private Image[] loadFrames(String basePath, int count) {
+    private static Image[] loadFrames(String basePath, int count) {
         Image[] frames = new Image[count];
         for (int i = 0; i < count; i++) {
             frames[i] = loadImage(basePath + (i + 1) + ".png");
@@ -122,37 +152,40 @@ public class BoardPanel extends JPanel {
         return frames;
     }
 
-    private Image loadImage(String path) {
-        URL url = getClass().getResource(path);
+    private static Image loadImage(String path) {
+        URL url = BoardPanel.class.getResource(path);
         if (url == null) {
-            throw new IllegalStateException("No se encontró " + path + " en el classpath.");
+            throw new IllegalStateException("No se encontro " + path + " en el classpath.");
         }
         return new ImageIcon(url).getImage();
     }
 
-    private boolean isCatSkin(int playerId) {
-        return playerId % 2 != 0;
+    private LoadedSkin skinFor(int playerId) {
+        int index = (playerId - 1) % skins.length;
+        return skins[index];
     }
 
     private Image waitingFrameFor(int playerId) {
-        return isCatSkin(playerId) ? catSleepingFrames[catSleepFrame] : penguinWaitingFrames[penguinWaitFrame];
+        LoadedSkin skin = skinFor(playerId);
+        return skin.waitingFrames[skin.waitFrame];
     }
 
     private Image collectingFrameFor(int playerId) {
-        return isCatSkin(playerId) ? catCollectingFrames[catCollectFrame] : penguinCollectingFrames[penguinCollectFrame];
+        LoadedSkin skin = skinFor(playerId);
+        return skin.collectingFrames[skin.collectFrame];
     }
 
     private Image sleepZoneFrameFor(int playerId) {
-        // En la SLEEP ZONE usamos la misma animación de "espera" de cada especie
+        // En la sleep zone usamos la misma animacion de espera de cada skin
         return waitingFrameFor(playerId);
     }
 
     private Point stationCenter(int index) {
         Point p = STATION_POSITIONS[index];
-        return new Point(p.x + CAT_HALF, p.y + CAT_HALF);
+        return new Point(p.x + SPRITE_HALF, p.y + SPRITE_HALF);
     }
 
-    private Point catAnchorNear(int stationIndex) {
+    private Point spriteAnchorNear(int stationIndex) {
         Point stationC = stationCenter(stationIndex);
         double dx = stationC.x - BOARD_CENTER.x;
         double dy = stationC.y - BOARD_CENTER.y;
@@ -161,9 +194,9 @@ public class BoardPanel extends JPanel {
         double ux = dx / len;
         double uy = dy / len;
 
-        int cx = (int) (stationC.x + ux * CAT_OFFSET);
-        int cy = (int) (stationC.y + uy * CAT_OFFSET);
-        return new Point(cx - CAT_HALF, cy - CAT_HALF);
+        int cx = (int) (stationC.x + ux * SPRITE_OFFSET);
+        int cy = (int) (stationC.y + uy * SPRITE_OFFSET);
+        return new Point(cx - SPRITE_HALF, cy - SPRITE_HALF);
     }
 
     private void drawMagicCurve(Graphics2D g2, Point fromCenter, Point toCenter, Color color) {
@@ -189,6 +222,44 @@ public class BoardPanel extends JPanel {
         g2.draw(curve);
     }
 
+    private void drawScoreboard(Graphics2D g2, List<Adventurer> adventurers) {
+        int width = 130;
+        int rowHeight = 16;
+        int height = 24 + adventurers.size() * rowHeight;
+        int x = getWidth() - width - 15;
+        int y = 55;
+
+        g2.setColor(new Color(0, 0, 0, 150));
+        g2.fillRoundRect(x, y, width, height, 12, 12);
+
+        g2.setFont(new Font("Arial", Font.BOLD, 13));
+        g2.setColor(Color.WHITE);
+        g2.drawString("Puntajes", x + 12, y + 18);
+
+        g2.setFont(new Font("Arial", Font.PLAIN, 12));
+        int row = y + 18 + rowHeight;
+        for (Adventurer a : adventurers) {
+            g2.setColor(PLAYER_COLORS[(a.playerId() - 1) % PLAYER_COLORS.length]);
+            g2.drawString("P" + a.playerId() + ": " + a.score(), x + 12, row);
+            row += rowHeight;
+        }
+    }
+
+    private void drawFinishedBanner(Graphics2D g2, boolean invariantOk) {
+        String message = "SIMULACION TERMINADA - invariante " + (invariantOk ? "OK" : "ROTO");
+        g2.setFont(new Font("Arial", Font.BOLD, 20));
+        FontMetrics metrics = g2.getFontMetrics();
+        int textWidth = metrics.stringWidth(message);
+        int x = (getWidth() - textWidth) / 2;
+        int y = 65;
+
+        g2.setColor(new Color(0, 0, 0, 170));
+        g2.fillRoundRect(x - 12, y - 24, textWidth + 24, 32, 10, 10);
+
+        g2.setColor(invariantOk ? new Color(90, 230, 120) : new Color(235, 70, 70));
+        g2.drawString(message, x, y);
+    }
+
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
@@ -212,13 +283,10 @@ public class BoardPanel extends JPanel {
             }
 
             int posterOffsetY = 30;
-            g2.drawImage(statusImg, p.x, p.y + posterOffsetY, CAT_SIZE, CAT_SIZE, this);
+            g2.drawImage(statusImg, p.x, p.y + posterOffsetY, SPRITE_SIZE, SPRITE_SIZE, this);
         }
 
-
-
         g2.setColor(Color.BLACK);
-
 
         if (!gameActive) {
             return;
@@ -230,6 +298,8 @@ public class BoardPanel extends JPanel {
         g2.drawString("ROUND " + round, getWidth() / 2 - 50, 30);
 
         List<Adventurer> adventurers = controller.engine().adventurers();
+        drawScoreboard(g2, adventurers);
+
         int sleepX = SLEEP_ZONE_X;
         int sleepY = SLEEP_ZONE_Y;
         int queueCornerIndex = 0;
@@ -237,12 +307,12 @@ public class BoardPanel extends JPanel {
         for (Adventurer a : adventurers) {
             switch (a.visualState()) {
                 case DONE_WAITING_BARRIER -> {
-                    g2.drawImage(sleepZoneFrameFor(a.playerId()), sleepX, sleepY, CAT_SIZE, CAT_SIZE, this);
-                    sleepX += CAT_SIZE + 5;
+                    g2.drawImage(sleepZoneFrameFor(a.playerId()), sleepX, sleepY, SPRITE_SIZE, SPRITE_SIZE, this);
+                    sleepX += SPRITE_SIZE + 5;
                 }
                 case WAITING_FOR_STATION -> {
                     Point p = QUEUE_CORNER_POSITIONS[queueCornerIndex % QUEUE_CORNER_POSITIONS.length];
-                    g2.drawImage(waitingFrameFor(a.playerId()), p.x, p.y, CAT_SIZE, CAT_SIZE, this);
+                    g2.drawImage(waitingFrameFor(a.playerId()), p.x, p.y, SPRITE_SIZE, SPRITE_SIZE, this);
                     queueCornerIndex++;
                 }
                 case CRAFTING -> {
@@ -260,17 +330,22 @@ public class BoardPanel extends JPanel {
 
                     Color color = PLAYER_COLORS[(a.playerId() - 1) % PLAYER_COLORS.length];
 
-                    Point catTopLeft = catAnchorNear(nearIndex);
-                    Point catCenter = new Point(catTopLeft.x + CAT_HALF, catTopLeft.y + CAT_HALF);
+                    Point spriteTopLeft = spriteAnchorNear(nearIndex);
+                    Point spriteCenter = new Point(spriteTopLeft.x + SPRITE_HALF, spriteTopLeft.y + SPRITE_HALF);
                     Point farCenter = stationCenter(farIndex);
 
-                    drawMagicCurve(g2, catCenter, farCenter, color);
+                    drawMagicCurve(g2, spriteCenter, farCenter, color);
 
-                    g2.drawImage(collectingFrameFor(a.playerId()), catTopLeft.x, catTopLeft.y, CAT_SIZE, CAT_SIZE, this);
+                    g2.drawImage(collectingFrameFor(a.playerId()), spriteTopLeft.x, spriteTopLeft.y,
+                            SPRITE_SIZE, SPRITE_SIZE, this);
                     g2.setColor(Color.WHITE);
-                    g2.drawString("P" + a.playerId(), catTopLeft.x, catTopLeft.y + CAT_SIZE + 12);
+                    g2.drawString("P" + a.playerId(), spriteTopLeft.x, spriteTopLeft.y + SPRITE_SIZE + 12);
                 }
             }
+        }
+
+        if (controller.engine().isFinished()) {
+            drawFinishedBanner(g2, controller.engine().invariantOk());
         }
     }
 }

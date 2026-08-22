@@ -39,6 +39,14 @@ public class BoardPanel extends JPanel {
                     "/Sprites_Lab3/MagicCat/Collecting/", 7),
             new SkinDefinition("/Sprites_Lab3/Penguin/Hiii/", 12, true,
                     "/Sprites_Lab3/Penguin/Collecting/", 19),
+            new SkinDefinition("/Sprites_Lab3/Fox/Waiting/", 5, true,
+                    "/Sprites_Lab3/Fox/Collecting/", 3),
+            new SkinDefinition("/Sprites_Lab3/Pig/Waiting/", 5, false,
+                    "/Sprites_Lab3/Pig/Collecting/", 8),
+            new SkinDefinition("/Sprites_Lab3/Lion/Waiting/", 2, true,
+                    "/Sprites_Lab3/Lion/Collecting/", 3),
+            new SkinDefinition("/Sprites_Lab3/Dog/Waiting/", 4, false,
+                    "/Sprites_Lab3/Dog/Collecting/", 3),
             // agregar aca una SkinDefinition por cada skin nueva que se sume
             // a Sprites_Lab3
     };
@@ -82,6 +90,17 @@ public class BoardPanel extends JPanel {
 
     private static final int SLEEP_ZONE_X = 120;
     private static final int SLEEP_ZONE_Y = 580;
+
+    // Esquina superior izquierda: es la unica zona del tablero que queda
+    // libre de estaciones y de las posiciones de cola (la estacion 0 empieza
+    // en x=120, la esquina de cola de arriba-izquierda esta en y=215). Con
+    // MAX_SCORE_ROWS fijo el alto del cuadro nunca cambia, asi que no importa
+    // cuantos jugadores haya, nunca se mete en esa zona.
+    private static final int SCORE_PANEL_X = 10;
+    private static final int SCORE_PANEL_Y = 55;
+    private static final int SCORE_PANEL_WIDTH = 108;
+    private static final int SCORE_ROW_HEIGHT = 16;
+    private static final int MAX_SCORE_ROWS = 8;
 
     private static final Point[] QUEUE_CORNER_POSITIONS = {
             new Point(42, 365),
@@ -223,25 +242,29 @@ public class BoardPanel extends JPanel {
     }
 
     private void drawScoreboard(Graphics2D g2, List<Adventurer> adventurers) {
-        int width = 130;
-        int rowHeight = 16;
-        int height = 24 + adventurers.size() * rowHeight;
-        int x = getWidth() - width - 15;
-        int y = 55;
+        boolean truncated = adventurers.size() > MAX_SCORE_ROWS;
+        int rowsToList = truncated ? MAX_SCORE_ROWS - 1 : adventurers.size();
+        int totalRows = truncated ? MAX_SCORE_ROWS : rowsToList;
+        int height = 24 + totalRows * SCORE_ROW_HEIGHT;
 
         g2.setColor(new Color(0, 0, 0, 150));
-        g2.fillRoundRect(x, y, width, height, 12, 12);
+        g2.fillRoundRect(SCORE_PANEL_X, SCORE_PANEL_Y, SCORE_PANEL_WIDTH, height, 12, 12);
 
-        g2.setFont(new Font("Arial", Font.BOLD, 13));
+        g2.setFont(new Font("Arial", Font.BOLD, 12));
         g2.setColor(Color.WHITE);
-        g2.drawString("Puntajes", x + 12, y + 18);
+        g2.drawString("Puntajes", SCORE_PANEL_X + 10, SCORE_PANEL_Y + 16);
 
-        g2.setFont(new Font("Arial", Font.PLAIN, 12));
-        int row = y + 18 + rowHeight;
-        for (Adventurer a : adventurers) {
+        g2.setFont(new Font("Arial", Font.PLAIN, 11));
+        int row = SCORE_PANEL_Y + 16 + SCORE_ROW_HEIGHT;
+        for (int i = 0; i < rowsToList; i++) {
+            Adventurer a = adventurers.get(i);
             g2.setColor(PLAYER_COLORS[(a.playerId() - 1) % PLAYER_COLORS.length]);
-            g2.drawString("P" + a.playerId() + ": " + a.score(), x + 12, row);
-            row += rowHeight;
+            g2.drawString("P" + a.playerId() + ": " + a.score(), SCORE_PANEL_X + 10, row);
+            row += SCORE_ROW_HEIGHT;
+        }
+        if (truncated) {
+            g2.setColor(Color.LIGHT_GRAY);
+            g2.drawString("+" + (adventurers.size() - rowsToList) + " mas", SCORE_PANEL_X + 10, row);
         }
     }
 

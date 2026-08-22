@@ -67,6 +67,20 @@ public class GameFrame extends JFrame {
             stopButton.setEnabled(false);
         });
 
+        // Revisa cada tanto si el motor ya termino las rondas configuradas,
+        // para volver a dejar los botones como al principio. Solo lee
+        // isFinished() (un AtomicBoolean con getter), no toca nada de la
+        // sincronizacion del juego.
+        Timer finishWatcher = new Timer(300, e -> {
+            if (controller.engine() != null && controller.engine().isFinished()) {
+                startButton.setEnabled(true);
+                pauseButton.setEnabled(false);
+                resumeButton.setEnabled(false);
+                stopButton.setEnabled(false);
+            }
+        });
+        finishWatcher.start();
+
         JLayeredPane layeredPane = new JLayeredPane();
         layeredPane.setPreferredSize(new Dimension(696, 995));
         layeredPane.add(board, Integer.valueOf(0));           // capa de abajo: el fondo

@@ -47,6 +47,13 @@ public class BoardPanel extends JPanel {
                     "/Sprites_Lab3/Lion/Collecting/", 3),
             new SkinDefinition("/Sprites_Lab3/Dog/Waiting/", 4, false,
                     "/Sprites_Lab3/Dog/Collecting/", 3),
+            // Creditos: sprites de Pikachu tomados de spriters-resource.com
+            // ("Pokemon Generation 1 Customs - Pikachu & Raichu"), usados
+            // solo para la presentacion de este laboratorio universitario,
+            // sin fines comerciales. Pokemon y Pikachu son marcas de
+            // Nintendo/Game Freak/Creatures Inc.
+            new SkinDefinition("/Sprites_Lab3/Pikachu/Wait/", 7, true,
+                    "/Sprites_Lab3/Pikachu/Collecting/", 12),
             // agregar aca una SkinDefinition por cada skin nueva que se sume
             // a Sprites_Lab3
     };
